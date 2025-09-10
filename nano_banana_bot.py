@@ -186,8 +186,16 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             for attempt in range(max_retries):
                 try:
                     print(f"Sending request to Segmind API (format {format_idx + 1}, attempt {attempt + 1})...")
+                    print(f"Request data keys: {list(data.keys())}")
+                    print(f"Image data size: {len(data.get('image', '')) if 'image' in data else 'N/A'} chars")
+                    
                     response = requests.post(SEGMIND_API_URL, json=data, headers=headers, timeout=120)
                     print(f"Response received: status {response.status_code}")
+                    print(f"Response headers: {dict(response.headers)}")
+                    print(f"Response content length: {len(response.content)} bytes")
+                    
+                    if response.status_code != 200:
+                        print(f"Error response text: {response.text[:500]}")
                     
                     # Если сервер временно недоступен (502, 503, 504), пробуем еще раз
                     if response.status_code in [502, 503, 504] and attempt < max_retries - 1:
@@ -220,6 +228,9 @@ async def generate_image_with_segmind(update: Update, context) -> int:
                         return ConversationHandler.END
                         
                     response.raise_for_status() # Проверка на ошибки HTTP (4xx, 5xx)
+                    
+                    # Успешный ответ - получили изображение
+                    print(f"SUCCESS! Received image from Segmind API")
                     success = True
                     break  # Успешный ответ, выходим из цикла
                         
@@ -233,7 +244,9 @@ async def generate_image_with_segmind(update: Update, context) -> int:
                         raise
                 except requests.exceptions.RequestException as e:
                     print(f"Request exception: {e}")
-                    break  # Выходим из цикла попыток для этого формата            if success:
+                    break  # Выходим из цикла попыток для этого формата
+            
+            if success:
                 break  # Успешный формат, выходим из цикла форматов
             else:
                 print(f"Data format {format_idx + 1} failed, trying next format...")
@@ -243,8 +256,11 @@ async def generate_image_with_segmind(update: Update, context) -> int:
                 chat_id=query.message.chat_id, 
                 text="😔 Не удалось обработать изображение ни с одним из форматов данных."
             )
-            return ConversationHandler.END        # Ответ от Segmind - это само изображение в виде байтов
+            return ConversationHandler.END
+        
+        # Ответ от Segmind - это само изображение в виде байтов
         generated_image_bytes = response.content
+        print(f"Sending generated image to user, size: {len(generated_image_bytes)} bytes")
 
         # Отправляем результат пользователю
         await context.bot.send_photo(
@@ -252,6 +268,7 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             photo=generated_image_bytes,
             caption="Готово! Как тебе такой образ?"
         )
+        print("Image sent successfully to user")
         await query.message.delete() # Удаляем сообщение "Отправляю запрос..."
 
     except requests.exceptions.RequestException as e:
