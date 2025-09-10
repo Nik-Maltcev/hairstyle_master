@@ -134,16 +134,10 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             temp_file_path = temp_file.name
         
         try:
-            # Загружаем на imgbb для получения публичного URL
-            imgbb_api_key = "d139f0b90f4d5f78ef72c96cc7fc9c93"  # Публичный ключ
-            imgbb_url = "https://api.imgbb.com/1/upload"
+            # Пропускаем imgbb и используем напрямую base64 (как в документации Segmind)
+            upload_response = None  # Имитируем неудачную загрузку
             
-            with open(temp_file_path, 'rb') as f:
-                files = {'image': f}
-                imgbb_data = {'key': imgbb_api_key}
-                upload_response = requests.post(imgbb_url, files=files, data=imgbb_data, timeout=30)
-            
-            if upload_response.status_code == 200:
+            if False:  # Отключаем imgbb
                 upload_result = upload_response.json()
                 public_image_url = upload_result['data']['url']
                 print(f"Image uploaded to: {public_image_url}")
