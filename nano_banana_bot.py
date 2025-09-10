@@ -93,19 +93,40 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             'Content-Type': 'application/json'
         }
         
-        # Используем base64 изображение напрямую
+        # Попробуем несколько форматов запроса
+        # Формат 1: с base64 изображением
         data = {
-            "prompt": f"A photorealistic portrait of a person with beautiful {hairstyle_prompt}, high detail, 8k",
-            "image": photo_base64
+            "prompt": f"Transform the hairstyle of this person to {hairstyle_prompt}, preserve the original face and identity completely, photorealistic, high quality, professional portrait, 8k resolution",
+            "images": [photo_base64]  # Попробуем 'images' вместо 'image'
         }
 
         # Отправляем POST-запрос с retry механизмом
         max_retries = 3
         retry_delay = 5  # секунд
         
-        for attempt in range(max_retries):
-            try:
-                response = requests.post(SEGMIND_API_URL, json=data, headers=headers, timeout=120)
+        # Пробуем разные форматы данных
+        data_formats = [
+            {
+                "prompt": f"Transform the hairstyle of this person to {hairstyle_prompt}, preserve the original face and identity completely, photorealistic, high quality, professional portrait, 8k resolution",
+                "images": [photo_base64]
+            },
+            {
+                "prompt": f"Transform the hairstyle of this person to {hairstyle_prompt}, preserve the original face and identity completely, photorealistic, high quality, professional portrait, 8k resolution",
+                "image": photo_base64
+            },
+            {
+                "prompt": f"Change hairstyle to {hairstyle_prompt}, keep same person, photorealistic",
+                "image_base64": photo_base64
+            }
+        ]
+        
+        success = False
+        for format_idx, data in enumerate(data_formats):
+            print(f"Trying data format {format_idx + 1}: {list(data.keys())}")
+            
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(SEGMIND_API_URL, json=data, headers=headers, timeout=120)
                 
                 # Если сервер временно недоступен (502, 503, 504), пробуем еще раз
                 if response.status_code in [502, 503, 504] and attempt < max_retries - 1:
@@ -137,19 +158,30 @@ async def generate_image_with_segmind(update: Update, context) -> int:
                     )
                     return ConversationHandler.END
                     
-                response.raise_for_status() # Проверка на ошибки HTTP (4xx, 5xx)
-                break  # Успешный ответ, выходим из цикла
-                
-            except requests.exceptions.Timeout:
-                if attempt < max_retries - 1:
-                    print(f"Request timeout, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2
-                    continue
-                else:
-                    raise
-
-        # Ответ от Segmind - это само изображение в виде байтов
+                    response.raise_for_status() # Проверка на ошибки HTTP (4xx, 5xx)
+                    success = True
+                    break  # Успешный ответ, выходим из цикла
+                    
+                except requests.exceptions.Timeout:
+                    if attempt < max_retries - 1:
+                        print(f"Request timeout, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        raise
+            
+            if success:
+                break  # Успешный формат, выходим из цикла форматов
+            else:
+                print(f"Data format {format_idx + 1} failed, trying next format...")
+        
+        if not success:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id, 
+                text="😔 Не удалось обработать изображение ни с одним из форматов данных."
+            )
+            return ConversationHandler.END        # Ответ от Segmind - это само изображение в виде байтов
         generated_image_bytes = response.content
 
         # Отправляем результат пользователю
