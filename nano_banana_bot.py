@@ -19,11 +19,11 @@ PHOTO, HAIRSTYLE = range(2)
 
 # --- Словарь с прическами ---
 HAIRSTYLES = {
-    "Кудри 💇‍♀️": "long curly hair",
+    "Кудри 💇‍♀️": "curly hair",
     "Каре 👩‍🦰": "bob cut",
-    "Короткая стрижка 💇‍♂️": "short pixie cut",
-    "Длинные прямые 👱‍♀️": "long straight hair",
-    "Цветные волосы 🌈": "rainbow colored hair"
+    "Короткая стрижка 💇‍♂️": "french crop",  # Как в успешном тесте пользователя
+    "Длинные прямые 👱‍♀️": "straight hair",
+    "Цветные волосы 🌈": "colored hair"
 }
 
 # --- Функция /start ---
@@ -149,36 +149,25 @@ async def generate_image_with_segmind(update: Update, context) -> int:
                 print(f"Image uploaded to: {public_image_url}")
                 
                 # Используем правильный формат API согласно документации с улучшенными промптами
-                data_formats = [
-                    {
-                        "prompt": f"Change only the hairstyle to {hairstyle_prompt}. Keep the same person, same face, same identity. Hair modification only.",
-                        "image_urls": [public_image_url]
-                    },
-                    {
-                        "prompt": f"Hair editing task: Replace current hair with {hairstyle_prompt}. Maintain person's appearance - face, skin, age, gender unchanged.",
-                        "image_urls": [public_image_url]
-                    }
+                # Простые промпты как в успешном тесте
+                simple_prompts = [
+                    f"сделай {hairstyle_prompt} прическу",
+                    f"make {hairstyle_prompt} hairstyle", 
+                    f"{hairstyle_prompt}",
                 ]
+                
+                data_formats = []
+                for prompt_text in simple_prompts:
+                    data_formats.append({
+                        "prompt": prompt_text,
+                        "image_urls": [public_image_url]
+                    })
                 print(f"Using {len(data_formats)} different prompt variations with public URL")
             else:
-                print(f"Failed to upload image: {upload_response.status_code}")
-                # Fallback к base64 с более специфичными промптами
-                # Попробуем разные стили промптов для лучшего результата
-                data_formats = [
-                    {
-                        "prompt": f"INSTRUCTION: Change ONLY the hairstyle to {hairstyle_prompt}. PRESERVE: exact same face, skin color, age, gender, facial expression. CHANGE: only hair style and color. DO NOT: create new person, change face, change identity.",
-                        "image": photo_base64
-                    },
-                    {
-                        "prompt": f"Hair edit request: Modify hair to {hairstyle_prompt}. Requirements: keep identical person, identical face, identical everything except hair styling.",
-                        "image": photo_base64
-                    },
-                    {
-                        "prompt": f"Subject-preserving hair transformation: {hairstyle_prompt}. Constraint: maintain subject identity at 100%, modify only hairstyle.",
-                        "image": photo_base64
-                    }
-                ]
-                print(f"Using {len(data_formats)} different prompt variations for base64")
+                print(f"Failed to upload image: {upload_response.status_code} - {upload_response.text}")
+                await context.bot.send_message(chat_id=update.effective_chat.id, 
+                                             text="Ошибка загрузки изображения. Попробуйте еще раз.")
+                return ConversationHandler.END
         finally:
             # Удаляем временный файл
             if os.path.exists(temp_file_path):
