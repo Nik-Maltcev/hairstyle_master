@@ -137,20 +137,17 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             # Используем напрямую base64 (как в документации Segmind)
             print("Using base64 format directly as per Segmind documentation")
             
-            # Простые промпты как в успешном тесте
-            simple_prompts = [
-                f"сделай {hairstyle_prompt} прическу",
-                f"make {hairstyle_prompt} hairstyle", 
-                f"{hairstyle_prompt}",
-            ]
+            # Один простой промпт как в вашем успешном тесте
+            prompt_text = f"{hairstyle_prompt}"
             
-            data_formats = []
-            for prompt_text in simple_prompts:
-                data_formats.append({
-                    "prompt": prompt_text,
-                    "image": photo_base64
-                })
-            print(f"Using {len(data_formats)} different prompt variations with base64")
+            data = {
+                "prompt": prompt_text,
+                "image": photo_base64
+            }
+            print(f"Using single prompt: '{prompt_text}' with base64")
+            
+            # Оборачиваем в список для совместимости с циклом
+            data_formats = [data]
         finally:
             # Удаляем временный файл
             if os.path.exists(temp_file_path):
