@@ -137,8 +137,8 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             # Используем напрямую base64 (как в документации Segmind)
             print("Using base64 format directly as per Segmind documentation")
             
-            # Один простой промпт как в вашем успешном тесте
-            prompt_text = f"{hairstyle_prompt}"
+            # Супер простой промпт по документации Nano Banana  
+            prompt_text = f"person with {hairstyle_prompt}"
             
             data = {
                 "prompt": prompt_text,
