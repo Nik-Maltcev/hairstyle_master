@@ -29,6 +29,8 @@ HAIRSTYLES = {
 # --- Функция /start ---
 async def start(update: Update, context) -> int:
     """Начинает диалог и просит пользователя загрузить фото."""
+    print(f"User {update.message.from_user.id} started conversation")
+    context.user_data.clear()  # Очищаем предыдущие данные
     await update.message.reply_text(
         "👋 Привет! Я могу помочь тебе 'примерить' новую прическу с помощью AI.\n\n"
         "Пожалуйста, загрузи свое селфи (как фото, а не как документ)."
@@ -38,17 +40,40 @@ async def start(update: Update, context) -> int:
 # --- Функция для получения фото ---
 async def get_photo(update: Update, context) -> int:
     """Получает фото, создает для него публичную ссылку и предлагает выбрать прическу."""
-    # Получаем информацию о файле
-    photo_file = await update.message.photo[-1].get_file()
-    
-    # Скачиваем файл напрямую в память
-    photo_bytes = await photo_file.download_as_bytearray()
-    
-    # Кодируем в base64 для отправки в API
-    photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
-    context.user_data['photo_base64'] = photo_base64
-    
-    print(f"Photo downloaded and encoded to base64, size: {len(photo_bytes)} bytes")
+    try:
+        print(f"Processing photo message from user {update.message.from_user.id}")
+        
+        # Проверяем, что у нас есть фото
+        if not update.message.photo:
+            await update.message.reply_text("😔 Фото не найдено. Пожалуйста, отправьте фото (не как документ).")
+            return PHOTO
+        
+        print(f"Found {len(update.message.photo)} photo sizes")
+        
+        # Получаем информацию о файле (берем самый большой размер)
+        photo_file = await update.message.photo[-1].get_file()
+        print(f"Photo file info: {photo_file.file_id}, {photo_file.file_size} bytes, path: {photo_file.file_path}")
+        
+        # Скачиваем файл напрямую в память
+        print("Downloading photo...")
+        photo_bytes = await photo_file.download_as_bytearray()
+        print(f"Photo downloaded successfully: {len(photo_bytes)} bytes")
+        
+        # Проверяем, что файл не пустой
+        if len(photo_bytes) == 0:
+            await update.message.reply_text("😔 Файл фото пустой. Попробуйте отправить другое фото.")
+            return PHOTO
+        
+        # Кодируем в base64 для отправки в API
+        photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
+        context.user_data['photo_base64'] = photo_base64
+        
+        print(f"Photo encoded to base64, size: {len(photo_base64)} characters")
+        
+    except Exception as e:
+        print(f"Error processing photo: {e}")
+        await update.message.reply_text("😔 Ошибка обработки фото. Попробуйте отправить другое изображение.")
+        return PHOTO
 
     # Создаем кнопки с прическами
     keyboard = [
@@ -68,6 +93,11 @@ async def generate_image_with_segmind(update: Update, context) -> int:
 
     hairstyle_prompt = query.data
     photo_base64 = context.user_data.get('photo_base64')
+
+    print(f"User {query.from_user.id} selected hairstyle: {hairstyle_prompt}")
+    print(f"Photo base64 available: {'Yes' if photo_base64 else 'No'}")
+    if photo_base64:
+        print(f"Photo base64 length: {len(photo_base64)} characters")
 
     if not photo_base64:
         await query.edit_message_text(text="😔 Фото не найдено. Пожалуйста, начните заново с команды /start.")
@@ -208,6 +238,14 @@ async def generate_image_with_segmind(update: Update, context) -> int:
     return ConversationHandler.END
 
 # --- Функция для отмены ---
+async def handle_non_photo(update: Update, context) -> int:
+    """Обрабатывает сообщения, которые не являются фото в состоянии PHOTO."""
+    await update.message.reply_text(
+        "📷 Пожалуйста, отправьте фото (изображение), а не текст или документ.\n"
+        "Убедитесь, что отправляете именно фото, а не файл."
+    )
+    return PHOTO
+
 async def cancel(update: Update, context) -> int:
     """Отменяет текущий диалог."""
     await update.message.reply_text('Действие отменено. Чтобы начать заново, отправьте /start.')
@@ -233,7 +271,11 @@ def main() -> None:
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            PHOTO: [MessageHandler(filters.PHOTO, get_photo)],
+            PHOTO: [
+                MessageHandler(filters.PHOTO, get_photo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_non_photo),
+                MessageHandler(filters.Document.ALL, handle_non_photo)
+            ],
             HAIRSTYLE: [CallbackQueryHandler(generate_image_with_segmind)],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
