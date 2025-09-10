@@ -148,28 +148,37 @@ async def generate_image_with_segmind(update: Update, context) -> int:
                 public_image_url = upload_result['data']['url']
                 print(f"Image uploaded to: {public_image_url}")
                 
-                # Используем правильный формат API согласно документации
-                transform_prompt = f"Transform this person's hairstyle to {hairstyle_prompt}, keep the same face and identity, preserve all facial features, photorealistic portrait"
-                print(f"Using prompt with public URL: {transform_prompt}")
-                
+                # Используем правильный формат API согласно документации с улучшенными промптами
                 data_formats = [
                     {
-                        "prompt": transform_prompt,
+                        "prompt": f"Change only the hairstyle to {hairstyle_prompt}. Keep the same person, same face, same identity. Hair modification only.",
+                        "image_urls": [public_image_url]
+                    },
+                    {
+                        "prompt": f"Hair editing task: Replace current hair with {hairstyle_prompt}. Maintain person's appearance - face, skin, age, gender unchanged.",
                         "image_urls": [public_image_url]
                     }
                 ]
+                print(f"Using {len(data_formats)} different prompt variations with public URL")
             else:
                 print(f"Failed to upload image: {upload_response.status_code}")
-                # Fallback к base64
-                fallback_prompt = f"Edit this person's hair to have {hairstyle_prompt}, keep the same face, same person, same identity, only change the hairstyle, photorealistic"
-                print(f"Using fallback prompt with base64: {fallback_prompt}")
-                
+                # Fallback к base64 с более специфичными промптами
+                # Попробуем разные стили промптов для лучшего результата
                 data_formats = [
                     {
-                        "prompt": fallback_prompt,
+                        "prompt": f"INSTRUCTION: Change ONLY the hairstyle to {hairstyle_prompt}. PRESERVE: exact same face, skin color, age, gender, facial expression. CHANGE: only hair style and color. DO NOT: create new person, change face, change identity.",
+                        "image": photo_base64
+                    },
+                    {
+                        "prompt": f"Hair edit request: Modify hair to {hairstyle_prompt}. Requirements: keep identical person, identical face, identical everything except hair styling.",
+                        "image": photo_base64
+                    },
+                    {
+                        "prompt": f"Subject-preserving hair transformation: {hairstyle_prompt}. Constraint: maintain subject identity at 100%, modify only hairstyle.",
                         "image": photo_base64
                     }
                 ]
+                print(f"Using {len(data_formats)} different prompt variations for base64")
         finally:
             # Удаляем временный файл
             if os.path.exists(temp_file_path):
