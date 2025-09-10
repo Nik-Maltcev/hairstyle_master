@@ -5,6 +5,7 @@ import requests
 import os
 import base64
 from io import BytesIO
+from PIL import Image
 
 # --- Ключи берутся из переменных окружения на Railway ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -45,22 +46,39 @@ async def start(update: Update, context) -> int:
 
 # --- Функция для получения фото ---
 async def get_photo(update: Update, context) -> int:
-    """Сохраняет фото в памяти и предлагает выбрать прическу."""
+    """Сохраняет фото в памяти, сжимает его и предлагает выбрать прическу."""
     photo_file = await update.message.photo[-1].get_file()
 
-    photo_bytes_io = BytesIO()
-    await photo_file.download_to_memory(photo_bytes_io)
-    photo_bytes_io.seek(0)
-    context.user_data['photo_bytes'] = photo_bytes_io.read()
+    # Скачиваем файл в память
+    original_photo_bytes_io = BytesIO()
+    await photo_file.download_to_memory(original_photo_bytes_io)
+    original_photo_bytes_io.seek(0)
 
+    # --- НОВЫЙ БЛОК КОДА ДЛЯ СЖАТИЯ ИЗОБРАЖЕНИЯ ---
+    with Image.open(original_photo_bytes_io) as img:
+        # Устанавливаем максимальный размер, например, 1024x1024 пикселей
+        max_size = (1024, 1024)
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+
+        # Сохраняем сжатое изображение в новый байтовый буфер
+        resized_photo_bytes_io = BytesIO()
+        img.save(resized_photo_bytes_io, format='JPEG', quality=85) # Качество 85% - хороший баланс
+        resized_photo_bytes_io.seek(0)
+        
+        # Сохраняем в контекст уже сжатые байты
+        context.user_data['photo_bytes'] = resized_photo_bytes_io.read()
+    # --- КОНЕЦ НОВОГО БЛОКА ---
+
+    # Создаем кнопки с прическами
     keyboard = [
         [InlineKeyboardButton(key, callback_data=value)]
         for key, value in HAIRSTYLES.items()
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text("Отлично! Теперь выбери прическу:", reply_markup=reply_markup)
+    await update.message.reply_text("Отлично! Фото принято и сжато. Теперь выбери прическу:", reply_markup=reply_markup)
     return HAIRSTYLE
+
 
 # --- Функция для генерации изображения с использованием OpenRouter ---
 async def generate_image_with_openrouter(update: Update, context) -> int:
@@ -116,7 +134,7 @@ async def generate_image_with_openrouter(update: Update, context) -> int:
 
         await query.edit_message_text(text=f"✅ Запрос создан! Генерирую новый образ... Это может занять минуту.")
 
-        # --- Фаза 2: Генерация изображения по созданному промпту (ИСПРАВЛЕНО) ---
+        # --- Фаза 2: Генерация изображения по созданному промпту ---
         payload_image_gen = {
             "model": IMAGE_GEN_MODEL,
             "messages": [
@@ -125,11 +143,11 @@ async def generate_image_with_openrouter(update: Update, context) -> int:
                     "content": generated_prompt
                 }
             ],
-            "modalities": ["image", "text"] # <-- Ключевое изменение согласно документации
+            "modalities": ["image", "text"]
         }
 
         response_image_gen = requests.post(
-            f"{OPENROUTER_API_BASE}/chat/completions", # <-- Правильный URL
+            f"{OPENROUTER_API_BASE}/chat/completions",
             headers=headers,
             json=payload_image_gen,
             timeout=120
@@ -137,16 +155,14 @@ async def generate_image_with_openrouter(update: Update, context) -> int:
         response_image_gen.raise_for_status()
 
         image_result = response_image_gen.json()
-
-        # Парсим ответ согласно новой документации
+        
         message = image_result.get("choices")[0].get("message")
         if message and message.get("images"):
-            # Получаем Base64 URL из ответа
             image_url = message["images"][0]["image_url"]["url"]
 
             await context.bot.send_photo(
                 chat_id=query.message.chat_id,
-                photo=image_url, # Telegram API может обработать base64 data URL
+                photo=image_url,
                 caption="Готово! Как тебе такой образ?"
             )
             await query.message.delete()
@@ -164,14 +180,12 @@ async def generate_image_with_openrouter(update: Update, context) -> int:
 
     return ConversationHandler.END
 
-
 # --- Функция для отмены ---
 async def cancel(update: Update, context) -> int:
     """Отменяет текущий диалог."""
     await update.message.reply_text('Действие отменено. Чтобы начать заново, отправьте /start.')
     context.user_data.clear()
     return ConversationHandler.END
-
 
 # --- Основная функция для запуска бота ---
 def main() -> None:
@@ -196,7 +210,6 @@ def main() -> None:
 
     print("Бот запущен и готов к работе...")
     application.run_polling()
-
 
 if __name__ == '__main__':
     main()
