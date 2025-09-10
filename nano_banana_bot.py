@@ -4,6 +4,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 import requests
 import os
 import base64
+import asyncio
 from io import BytesIO
 
 # --- Ключи берутся из переменных окружения на Railway ---
@@ -98,20 +99,55 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             "image": photo_base64
         }
 
-        # Отправляем POST-запрос
-        response = requests.post(SEGMIND_API_URL, json=data, headers=headers, timeout=120)
+        # Отправляем POST-запрос с retry механизмом
+        max_retries = 3
+        retry_delay = 5  # секунд
         
-        # Проверяем специфичные ошибки
-        if response.status_code == 406:
-            error_text = response.text if response.text else "Unknown error"
-            print(f"Segmind API 406 Error: {error_text}")
-            await context.bot.send_message(
-                chat_id=query.message.chat_id, 
-                text="😔 Ошибка обработки изображения. Возможно, проблемы с форматом изображения или API ключом."
-            )
-            return ConversationHandler.END
-            
-        response.raise_for_status() # Проверка на ошибки HTTP (4xx, 5xx)
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(SEGMIND_API_URL, json=data, headers=headers, timeout=120)
+                
+                # Если сервер временно недоступен (502, 503, 504), пробуем еще раз
+                if response.status_code in [502, 503, 504] and attempt < max_retries - 1:
+                    print(f"Server error {response.status_code}, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                    # Обновляем сообщение пользователю
+                    await query.edit_message_text(
+                        text=f"⏳ Сервер временно перегружен, повторяю попытку... ({attempt + 1}/{max_retries})"
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Увеличиваем задержку для следующей попытки
+                    continue
+                
+                # Проверяем специфичные ошибки
+                if response.status_code == 406:
+                    error_text = response.text if response.text else "Unknown error"
+                    print(f"Segmind API 406 Error: {error_text}")
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id, 
+                        text="😔 Ошибка обработки изображения. Возможно, проблемы с форматом изображения или API ключом."
+                    )
+                    return ConversationHandler.END
+                
+                # Если получили 502/503/504 на последней попытке
+                if response.status_code in [502, 503, 504]:
+                    print(f"Server error {response.status_code} persists after all retries")
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id, 
+                        text="😔 Сервер Segmind временно недоступен. Попробуйте позже через несколько минут."
+                    )
+                    return ConversationHandler.END
+                    
+                response.raise_for_status() # Проверка на ошибки HTTP (4xx, 5xx)
+                break  # Успешный ответ, выходим из цикла
+                
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    print(f"Request timeout, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                else:
+                    raise
 
         # Ответ от Segmind - это само изображение в виде байтов
         generated_image_bytes = response.content
@@ -167,9 +203,7 @@ def main() -> None:
             PHOTO: [MessageHandler(filters.PHOTO, get_photo)],
             HAIRSTYLE: [CallbackQueryHandler(generate_image_with_segmind)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
-        conversation_timeout=600,
-        per_message=False
+        fallbacks=[CommandHandler('cancel', cancel)]
     )
 
     application.add_handler(conv_handler)
