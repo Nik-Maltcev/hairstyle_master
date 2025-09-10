@@ -1,0 +1,1 @@
+worker: python nano_banana_bot.py
