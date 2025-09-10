@@ -37,11 +37,17 @@ async def start(update: Update, context) -> int:
 # --- Функция для получения фото ---
 async def get_photo(update: Update, context) -> int:
     """Получает фото, создает для него публичную ссылку и предлагает выбрать прическу."""
+    # Получаем информацию о файле
     photo_file = await update.message.photo[-1].get_file()
-
-    # Создаем временную публичную ссылку на файл через API Telegram
-    public_photo_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{photo_file.file_path}"
-    context.user_data['photo_url'] = public_photo_url
+    
+    # Скачиваем файл напрямую в память
+    photo_bytes = await photo_file.download_as_bytearray()
+    
+    # Кодируем в base64 для отправки в API
+    photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
+    context.user_data['photo_base64'] = photo_base64
+    
+    print(f"Photo downloaded and encoded to base64, size: {len(photo_bytes)} bytes")
 
     # Создаем кнопки с прическами
     keyboard = [
@@ -60,9 +66,9 @@ async def generate_image_with_segmind(update: Update, context) -> int:
     await query.answer()
 
     hairstyle_prompt = query.data
-    photo_url = context.user_data.get('photo_url')
+    photo_base64 = context.user_data.get('photo_base64')
 
-    if not photo_url:
+    if not photo_base64:
         await query.edit_message_text(text="😔 Фото не найдено. Пожалуйста, начните заново с команды /start.")
         return ConversationHandler.END
 
@@ -77,7 +83,7 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             )
             return ConversationHandler.END
         
-        print(f"Using photo URL: {photo_url}")
+        print(f"Using base64 encoded image, size: {len(photo_base64)} chars")
         print(f"Using prompt: A photorealistic portrait of a person with beautiful {hairstyle_prompt}, high detail, 8k")
         
         # Формируем заголовки и тело запроса для Segmind
@@ -86,40 +92,24 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             'Content-Type': 'application/json'
         }
         
-        # Пробуем сначала с image_urls (как в документации)
+        # Используем base64 изображение напрямую
         data = {
             "prompt": f"A photorealistic portrait of a person with beautiful {hairstyle_prompt}, high detail, 8k",
-            "image_urls": [photo_url]
+            "image": photo_base64
         }
 
         # Отправляем POST-запрос
         response = requests.post(SEGMIND_API_URL, json=data, headers=headers, timeout=120)
         
-        # Если получили 406 с image_urls, попробуем с base64
+        # Проверяем специфичные ошибки
         if response.status_code == 406:
-            print("Trying with base64 encoded image...")
-            
-            # Загружаем изображение от Telegram и конвертируем в base64
-            photo_response = requests.get(photo_url, timeout=30)
-            photo_response.raise_for_status()
-            photo_base64 = base64.b64encode(photo_response.content).decode('utf-8')
-            
-            # Пробуем с base64
-            data_base64 = {
-                "prompt": f"A photorealistic portrait of a person with beautiful {hairstyle_prompt}, high detail, 8k",
-                "image": photo_base64
-            }
-            
-            response = requests.post(SEGMIND_API_URL, json=data_base64, headers=headers, timeout=120)
-            
-            if response.status_code == 406:
-                error_text = response.text if response.text else "Unknown error"
-                print(f"Segmind API 406 Error: {error_text}")
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id, 
-                    text="😔 Ошибка обработки изображения. Возможно, проблемы с форматом изображения или API ключом."
-                )
-                return ConversationHandler.END
+            error_text = response.text if response.text else "Unknown error"
+            print(f"Segmind API 406 Error: {error_text}")
+            await context.bot.send_message(
+                chat_id=query.message.chat_id, 
+                text="😔 Ошибка обработки изображения. Возможно, проблемы с форматом изображения или API ключом."
+            )
+            return ConversationHandler.END
             
         response.raise_for_status() # Проверка на ошибки HTTP (4xx, 5xx)
 
@@ -178,7 +168,8 @@ def main() -> None:
             HAIRSTYLE: [CallbackQueryHandler(generate_image_with_segmind)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
-        conversation_timeout=600
+        conversation_timeout=600,
+        per_message=False
     )
 
     application.add_handler(conv_handler)
