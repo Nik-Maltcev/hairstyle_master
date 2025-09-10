@@ -134,21 +134,54 @@ async def generate_image_with_segmind(update: Update, context) -> int:
         max_retries = 3
         retry_delay = 5  # секунд
         
-        # Пробуем разные форматы данных
-        data_formats = [
-            {
-                "prompt": f"Transform the hairstyle of this person to {hairstyle_prompt}, preserve the original face and identity completely, photorealistic, high quality, professional portrait, 8k resolution",
-                "images": [photo_base64]
-            },
-            {
-                "prompt": f"Transform the hairstyle of this person to {hairstyle_prompt}, preserve the original face and identity completely, photorealistic, high quality, professional portrait, 8k resolution",
-                "image": photo_base64
-            },
-            {
-                "prompt": f"Change hairstyle to {hairstyle_prompt}, keep same person, photorealistic",
-                "image_base64": photo_base64
-            }
-        ]
+        # Создаем временный файл и загружаем его на временный сервис
+        import tempfile
+        import time
+        import os
+        
+        # Декодируем base64 обратно в байты
+        photo_bytes = base64.b64decode(photo_base64)
+        
+        # Сохраняем во временный файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
+            temp_file.write(photo_bytes)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Загружаем на imgbb для получения публичного URL
+            imgbb_api_key = "d139f0b90f4d5f78ef72c96cc7fc9c93"  # Публичный ключ
+            imgbb_url = "https://api.imgbb.com/1/upload"
+            
+            with open(temp_file_path, 'rb') as f:
+                files = {'image': f}
+                imgbb_data = {'key': imgbb_api_key}
+                upload_response = requests.post(imgbb_url, files=files, data=imgbb_data, timeout=30)
+            
+            if upload_response.status_code == 200:
+                upload_result = upload_response.json()
+                public_image_url = upload_result['data']['url']
+                print(f"Image uploaded to: {public_image_url}")
+                
+                # Используем правильный формат API согласно документации
+                data_formats = [
+                    {
+                        "prompt": f"Transform this person's hairstyle to {hairstyle_prompt}, keep the same face and identity, preserve all facial features, photorealistic portrait",
+                        "image_urls": [public_image_url]
+                    }
+                ]
+            else:
+                print(f"Failed to upload image: {upload_response.status_code}")
+                # Fallback к base64
+                data_formats = [
+                    {
+                        "prompt": f"Edit this person's hair to have {hairstyle_prompt}, keep the same face, same person, same identity, only change the hairstyle, photorealistic",
+                        "image": photo_base64
+                    }
+                ]
+        finally:
+            # Удаляем временный файл
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
         
         success = False
         for format_idx, data in enumerate(data_formats):
@@ -156,7 +189,9 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             
             for attempt in range(max_retries):
                 try:
+                    print(f"Sending request to Segmind API (format {format_idx + 1}, attempt {attempt + 1})...")
                     response = requests.post(SEGMIND_API_URL, json=data, headers=headers, timeout=120)
+                    print(f"Response received: status {response.status_code}")
                     
                     # Если сервер временно недоступен (502, 503, 504), пробуем еще раз
                     if response.status_code in [502, 503, 504] and attempt < max_retries - 1:
