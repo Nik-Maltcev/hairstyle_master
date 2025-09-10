@@ -3,20 +3,14 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 import requests
 import os
-import base64
 from io import BytesIO
-from PIL import Image
 
 # --- Ключи берутся из переменных окружения на Railway ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
+SEGMIND_API_KEY = os.getenv('SEGMIND_API_KEY') # <-- ИЗМЕНЕНИЕ: Новый ключ
 
-# --- Константы для OpenRouter ---
-OPENROUTER_API_BASE = "https://openrouter.ai/api/v1"
-# Модель для анализа фото и создания промпта
-GEMINI_FLASH_MODEL = "google/gemini-flash-1.5"
-# Модель для генерации изображения по промпту (из документации)
-IMAGE_GEN_MODEL = "google/gemini-2.5-flash-image-preview"
+# --- Константы для Segmind ---
+SEGMIND_API_URL = "https://api.segmind.com/v1/nano-banana"
 
 # --- Состояния для диалога ---
 PHOTO, HAIRSTYLE = range(2)
@@ -30,11 +24,6 @@ HAIRSTYLES = {
     "Цветные волосы 🌈": "rainbow colored hair"
 }
 
-# --- Вспомогательная функция для кодирования изображения в Base64 ---
-def encode_image_to_base64(image_bytes):
-    """Кодирует байты изображения в строку Base64."""
-    return base64.b64encode(image_bytes).decode('utf-8')
-
 # --- Функция /start ---
 async def start(update: Update, context) -> int:
     """Начинает диалог и просит пользователя загрузить фото."""
@@ -46,28 +35,12 @@ async def start(update: Update, context) -> int:
 
 # --- Функция для получения фото ---
 async def get_photo(update: Update, context) -> int:
-    """Сохраняет фото в памяти, сжимает его и предлагает выбрать прическу."""
+    """Получает фото, создает для него публичную ссылку и предлагает выбрать прическу."""
     photo_file = await update.message.photo[-1].get_file()
 
-    # Скачиваем файл в память
-    original_photo_bytes_io = BytesIO()
-    await photo_file.download_to_memory(original_photo_bytes_io)
-    original_photo_bytes_io.seek(0)
-
-    # --- НОВЫЙ БЛОК КОДА ДЛЯ СЖАТИЯ ИЗОБРАЖЕНИЯ ---
-    with Image.open(original_photo_bytes_io) as img:
-        # Устанавливаем максимальный размер, например, 1024x1024 пикселей
-        max_size = (1024, 1024)
-        img.thumbnail(max_size, Image.Resampling.LANCZOS)
-
-        # Сохраняем сжатое изображение в новый байтовый буфер
-        resized_photo_bytes_io = BytesIO()
-        img.save(resized_photo_bytes_io, format='JPEG', quality=85) # Качество 85% - хороший баланс
-        resized_photo_bytes_io.seek(0)
-        
-        # Сохраняем в контекст уже сжатые байты
-        context.user_data['photo_bytes'] = resized_photo_bytes_io.read()
-    # --- КОНЕЦ НОВОГО БЛОКА ---
+    # Создаем временную публичную ссылку на файл через API Telegram
+    public_photo_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{photo_file.file_path}"
+    context.user_data['photo_url'] = public_photo_url
 
     # Создаем кнопки с прическами
     keyboard = [
@@ -76,101 +49,49 @@ async def get_photo(update: Update, context) -> int:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text("Отлично! Фото принято и сжато. Теперь выбери прическу:", reply_markup=reply_markup)
+    await update.message.reply_text("Отлично! Фото принято. Теперь выбери прическу:", reply_markup=reply_markup)
     return HAIRSTYLE
 
-
-# --- Функция для генерации изображения с использованием OpenRouter ---
-async def generate_image_with_openrouter(update: Update, context) -> int:
+# --- Функция для генерации изображения с использованием Segmind ---
+async def generate_image_with_segmind(update: Update, context) -> int:
     """Получает выбор прически, генерирует изображение и отправляет пользователю."""
     query = update.callback_query
     await query.answer()
 
     hairstyle_prompt = query.data
-    photo_bytes = context.user_data.get('photo_bytes')
+    photo_url = context.user_data.get('photo_url')
 
-    if not photo_bytes:
+    if not photo_url:
         await query.edit_message_text(text="😔 Фото не найдено. Пожалуйста, начните заново с команды /start.")
         return ConversationHandler.END
 
-    await query.edit_message_text(text="⏳ Анализирую ваше фото, чтобы создать уникальный запрос для AI...")
+    await query.edit_message_text(text="⏳ Отправляю запрос в Segmind AI... Это может занять около минуты.")
 
     try:
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
+        # Формируем заголовки и тело запроса для Segmind
+        headers = {'x-api-key': SEGMIND_API_KEY}
+        data = {
+          "prompt": f"A photorealistic portrait of a person with beautiful {hairstyle_prompt}, high detail, 8k",
+          "image_urls": [photo_url]
         }
 
-        # --- Фаза 1: Анализ фото и генерация промпта с Gemini Flash ---
-        base64_image = encode_image_to_base64(photo_bytes)
-        payload_gemini = {
-            "model": GEMINI_FLASH_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"Create a short, detailed, photorealistic prompt for an image generation model. The goal is to reimagine the person in the photo with '{hairstyle_prompt}'. Describe their key facial features, gender, and approximate age based on the photo. The final image should be a high-quality, realistic portrait. Start the prompt with 'photorealistic portrait of a person...'. Do not mention the original photo."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                        }
-                    ]
-                }
-            ]
-        }
+        # Отправляем POST-запрос
+        response = requests.post(SEGMIND_API_URL, json=data, headers=headers, timeout=120)
+        response.raise_for_status() # Проверка на ошибки HTTP (4xx, 5xx)
 
-        response_gemini = requests.post(
-            f"{OPENROUTER_API_BASE}/chat/completions",
-            headers=headers,
-            json=payload_gemini,
-            timeout=30
+        # Ответ от Segmind - это само изображение в виде байтов
+        generated_image_bytes = response.content
+
+        # Отправляем результат пользователю
+        await context.bot.send_photo(
+            chat_id=query.message.chat_id,
+            photo=generated_image_bytes,
+            caption="Готово! Как тебе такой образ?"
         )
-        response_gemini.raise_for_status()
-        analysis_result = response_gemini.json()
-        generated_prompt = analysis_result['choices'][0]['message']['content'].strip()
-
-        await query.edit_message_text(text=f"✅ Запрос создан! Генерирую новый образ... Это может занять минуту.")
-
-        # --- Фаза 2: Генерация изображения по созданному промпту ---
-        payload_image_gen = {
-            "model": IMAGE_GEN_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": generated_prompt
-                }
-            ],
-            "modalities": ["image", "text"]
-        }
-
-        response_image_gen = requests.post(
-            f"{OPENROUTER_API_BASE}/chat/completions",
-            headers=headers,
-            json=payload_image_gen,
-            timeout=120
-        )
-        response_image_gen.raise_for_status()
-
-        image_result = response_image_gen.json()
-        
-        message = image_result.get("choices")[0].get("message")
-        if message and message.get("images"):
-            image_url = message["images"][0]["image_url"]["url"]
-
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=image_url,
-                caption="Готово! Как тебе такой образ?"
-            )
-            await query.message.delete()
-        else:
-            raise ValueError("В ответе API не найдено сгенерированное изображение.")
+        await query.message.delete() # Удаляем сообщение "Отправляю запрос..."
 
     except requests.exceptions.RequestException as e:
-        error_message = f"😔 Ошибка при связи с API. Возможно, модель занята или ваш баланс на OpenRouter исчерпан.\n\nДетали: {e}"
+        error_message = f"😔 Ошибка при связи с API Segmind. Проверьте ваш API ключ или попробуйте позже.\n\nДетали: {e}"
         print(error_message)
         await context.bot.send_message(chat_id=query.message.chat_id, text=error_message)
     except Exception as e:
@@ -190,8 +111,8 @@ async def cancel(update: Update, context) -> int:
 # --- Основная функция для запуска бота ---
 def main() -> None:
     """Запуск бота."""
-    if not TELEGRAM_TOKEN or not OPENROUTER_API_KEY:
-        print("Ошибка: Отсутствуют переменные окружения TELEGRAM_TOKEN или OPENROUTER_API_KEY.")
+    if not TELEGRAM_TOKEN or not SEGMIND_API_KEY:
+        print("Ошибка: Отсутствуют переменные окружения TELEGRAM_TOKEN или SEGMIND_API_KEY.")
         return
 
     application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -200,7 +121,7 @@ def main() -> None:
         entry_points=[CommandHandler('start', start)],
         states={
             PHOTO: [MessageHandler(filters.PHOTO, get_photo)],
-            HAIRSTYLE: [CallbackQueryHandler(generate_image_with_openrouter)],
+            HAIRSTYLE: [CallbackQueryHandler(generate_image_with_segmind)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         conversation_timeout=600
