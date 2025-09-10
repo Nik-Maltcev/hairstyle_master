@@ -134,34 +134,23 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             temp_file_path = temp_file.name
         
         try:
-            # Пропускаем imgbb и используем напрямую base64 (как в документации Segmind)
-            upload_response = None  # Имитируем неудачную загрузку
+            # Используем напрямую base64 (как в документации Segmind)
+            print("Using base64 format directly as per Segmind documentation")
             
-            if False:  # Отключаем imgbb
-                upload_result = upload_response.json()
-                public_image_url = upload_result['data']['url']
-                print(f"Image uploaded to: {public_image_url}")
-                
-                # Используем правильный формат API согласно документации с улучшенными промптами
-                # Простые промпты как в успешном тесте
-                simple_prompts = [
-                    f"сделай {hairstyle_prompt} прическу",
-                    f"make {hairstyle_prompt} hairstyle", 
-                    f"{hairstyle_prompt}",
-                ]
-                
-                data_formats = []
-                for prompt_text in simple_prompts:
-                    data_formats.append({
-                        "prompt": prompt_text,
-                        "image_urls": [public_image_url]
-                    })
-                print(f"Using {len(data_formats)} different prompt variations with public URL")
-            else:
-                print(f"Failed to upload image: {upload_response.status_code} - {upload_response.text}")
-                await context.bot.send_message(chat_id=update.effective_chat.id, 
-                                             text="Ошибка загрузки изображения. Попробуйте еще раз.")
-                return ConversationHandler.END
+            # Простые промпты как в успешном тесте
+            simple_prompts = [
+                f"сделай {hairstyle_prompt} прическу",
+                f"make {hairstyle_prompt} hairstyle", 
+                f"{hairstyle_prompt}",
+            ]
+            
+            data_formats = []
+            for prompt_text in simple_prompts:
+                data_formats.append({
+                    "prompt": prompt_text,
+                    "image": photo_base64
+                })
+            print(f"Using {len(data_formats)} different prompt variations with base64")
         finally:
             # Удаляем временный файл
             if os.path.exists(temp_file_path):
