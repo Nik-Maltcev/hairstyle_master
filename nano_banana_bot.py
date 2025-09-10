@@ -175,6 +175,10 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             if os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
         
+        # Параметры для retry механизма
+        max_retries = 3
+        retry_delay = 5  # секунд
+        
         success = False
         for format_idx, data in enumerate(data_formats):
             print(f"Trying data format {format_idx + 1}: {list(data.keys())}")
