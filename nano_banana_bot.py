@@ -114,25 +114,11 @@ async def generate_image_with_segmind(update: Update, context) -> int:
             )
             return ConversationHandler.END
         
-        print(f"Using base64 encoded image, size: {len(photo_base64)} chars")
-        print(f"Using prompt: A photorealistic portrait of a person with beautiful {hairstyle_prompt}, high detail, 8k")
-        
-        # Формируем заголовки и тело запроса для Segmind
+        # Формируем заголовки для API запросов
         headers = {
             'x-api-key': SEGMIND_API_KEY,
             'Content-Type': 'application/json'
         }
-        
-        # Попробуем несколько форматов запроса
-        # Формат 1: с base64 изображением
-        data = {
-            "prompt": f"Transform the hairstyle of this person to {hairstyle_prompt}, preserve the original face and identity completely, photorealistic, high quality, professional portrait, 8k resolution",
-            "images": [photo_base64]  # Попробуем 'images' вместо 'image'
-        }
-
-        # Отправляем POST-запрос с retry механизмом
-        max_retries = 3
-        retry_delay = 5  # секунд
         
         # Создаем временный файл и загружаем его на временный сервис
         import tempfile
@@ -163,18 +149,24 @@ async def generate_image_with_segmind(update: Update, context) -> int:
                 print(f"Image uploaded to: {public_image_url}")
                 
                 # Используем правильный формат API согласно документации
+                transform_prompt = f"Transform this person's hairstyle to {hairstyle_prompt}, keep the same face and identity, preserve all facial features, photorealistic portrait"
+                print(f"Using prompt with public URL: {transform_prompt}")
+                
                 data_formats = [
                     {
-                        "prompt": f"Transform this person's hairstyle to {hairstyle_prompt}, keep the same face and identity, preserve all facial features, photorealistic portrait",
+                        "prompt": transform_prompt,
                         "image_urls": [public_image_url]
                     }
                 ]
             else:
                 print(f"Failed to upload image: {upload_response.status_code}")
                 # Fallback к base64
+                fallback_prompt = f"Edit this person's hair to have {hairstyle_prompt}, keep the same face, same person, same identity, only change the hairstyle, photorealistic"
+                print(f"Using fallback prompt with base64: {fallback_prompt}")
+                
                 data_formats = [
                     {
-                        "prompt": f"Edit this person's hair to have {hairstyle_prompt}, keep the same face, same person, same identity, only change the hairstyle, photorealistic",
+                        "prompt": fallback_prompt,
                         "image": photo_base64
                     }
                 ]
